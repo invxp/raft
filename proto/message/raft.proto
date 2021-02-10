@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package raft.message;
+
+option go_package = "proto/message";
+
+message RequestVoteRequest {
+	 int32 Term = 1;
+	 string CandidateId = 2;
+	 int32 LastLogIndex = 3;
+	 int32 LastLogTerm = 4;
+}
+
+message RequestVoteReply {
+	 int32 Term = 1;
+	 bool VoteGranted = 2;
+}
+
+message AppendEntriesRequest {
+	 int32 Term = 1;
+	 string LeaderId = 2;
+
+	 int32 PrevLogIndex = 3;
+	 int32 PrevLogTerm = 4;
+
+    message LogEntry {
+         string Command = 1;
+         int32 Term = 2;
+    }
+
+    repeated LogEntry Entries = 5;
+	 int32 LeaderCommit = 6;
+}
+
+message AppendEntriesReply {
+	 int32 Term = 1;
+	 bool Success = 2;
+
+	 int32 ConflictIndex = 3 ;
+	 int32 ConflictTerm  = 4;
+}
+
+message ForwardMessageRequest {
+	 int32 Term = 1;
+	 string NodeID = 2;
+	 string Command = 3;
+}
+
+message ForwardMessageReply {
+     int32 Term = 1;
+	 bool SubmitGranted = 2;
+}
+
+message ReplicaRequest {
+    repeated NodeInfo Nodes = 1;
+    message NodeInfo {
+         string NodeID = 1;
+         bool IsRemove = 2;
+    }
+}
+
+message ReplicaReply {
+	 bool Success = 1;
+}
+
+service Message {
+  rpc RequestVote (RequestVoteRequest) returns (RequestVoteReply) {}
+  rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesReply) {}
+  rpc ForwardMessage (ForwardMessageRequest) returns (ForwardMessageReply) {}
+  rpc Replica (ReplicaRequest) returns (ReplicaReply) {}
+}
