@@ -1,4 +1,4 @@
-module github.com/invxp/raft
+module raft
 
 go 1.15
 
