@@ -16,6 +16,7 @@
 
 # idea files
 .idea/
+.idea/*
 
 # raft storage
 log
