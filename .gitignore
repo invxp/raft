@@ -16,9 +16,8 @@
 
 # idea files
 .idea/
-.idea/*
 
 # raft storage
-log
-term
-vote
+/log
+/vote
+/term
