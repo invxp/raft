@@ -32,9 +32,9 @@ type BenchTest struct {
 // NewBench 新建测试用例(初始化)
 func NewBench(t *testing.T, address ...string) *BenchTest {
 	rand.Seed(time.Now().UnixNano())
-	os.Remove("vote")
-	os.Remove("term")
-	os.Remove("log")
+	_ = os.Remove("vote")
+	_ = os.Remove("term")
+	_ = os.Remove("log")
 	ns := make(map[string]*Server, len(address))
 	connected := make(map[string]bool, len(address))
 	alive := make(map[string]bool, len(address))
@@ -99,6 +99,10 @@ func (h *BenchTest) Shutdown() {
 	for k := range h.cluster {
 		close(h.commitChan[k])
 	}
+
+	_ = os.Remove("vote")
+	_ = os.Remove("term")
+	_ = os.Remove("log")
 }
 
 // DisconnectPeer 断开本地服务并且断开其他节点的该服务

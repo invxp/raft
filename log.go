@@ -3,7 +3,7 @@
 package raft
 
 import (
-	"raft/proto/message"
+	"github.com/invxp/raft/proto/message"
 	"time"
 )
 

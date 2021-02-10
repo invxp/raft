@@ -2,7 +2,7 @@ package raft
 
 import (
 	"context"
-	"raft/proto/message"
+	"github.com/invxp/raft/proto/message"
 )
 
 type rpcProxy struct {

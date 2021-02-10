@@ -3,9 +3,9 @@
 package raft
 
 import (
+	"github.com/invxp/raft/proto/message"
 	"google.golang.org/grpc"
 	"math/rand"
-	"raft/proto/message"
 	"sync"
 	"time"
 )

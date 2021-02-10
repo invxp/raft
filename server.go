@@ -5,10 +5,10 @@ package raft
 import (
 	"context"
 	"fmt"
+	"github.com/invxp/raft/proto/message"
 	"google.golang.org/grpc"
 	"log"
 	"net"
-	"raft/proto/message"
 	"sync"
 	"time"
 )
