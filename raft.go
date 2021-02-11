@@ -256,6 +256,11 @@ func (r *raft) loopCommits() {
 			r.lastApplied = r.commitIndex
 		}
 		r.mu.Unlock()
+
+		if r.commitChan == nil {
+			return
+		}
+
 		//将内部提交的数据通知给外部
 		for i, entry := range entries {
 			r.commitChan <- CommitEntry{

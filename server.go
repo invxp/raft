@@ -99,8 +99,8 @@ func NewServer(address string, commitChan chan<- CommitEntry, config *Config, no
 		s.nodeClients[v] = nil
 	}
 	s.storage = NewMapStorage()
-	s.commitChan = commitChan
 
+	s.commitChan = commitChan
 	s.rpcMsgTimeoutMs = 500
 	s.heartbeatMs = 20
 	s.electionTimeoutMinMs = 150
