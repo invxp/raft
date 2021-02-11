@@ -29,11 +29,9 @@ func TestRaft(t *testing.T) {
     //具体可参考TestMainFunctions
     //创建日志回调记录
     commit := make(chan raft.CommitEntry)
-    //创建默认配置信息
-    config := raft.Config{150, 300, 50, 3000, true, true}
     
     //开始监听所有服务
-    server := raft.NewServer(":0", raft.NewMapStorage(), commit, config)
+    server := raft.NewServer(":0", commit, nil)
     server.Server()
     
     exit := make(chan interface{})
@@ -50,9 +48,18 @@ func TestRaft(t *testing.T) {
     }()
     
     //提交一条日志(如果只有一个节点会提交失败)
-    server.Commit("TEST-LOG")
+    fmt.Println(server.Commit("TEST-LOG"))
     
-    time.Sleep(time.Second * 10)
+    time.Sleep(time.Second)
+    
+    //获取所有日志
+    fmt.Println(server.Logs(0))
+    
+    //获取所有节点IP
+    fmt.Println(server.Nodes())
+    
+    //获取节点当前状态
+    fmt.Println(server.Status())
     
     //退出
     server.Shutdown()
