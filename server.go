@@ -22,17 +22,17 @@ var ErrorServerAlreadyShutdown = fmt.Errorf("server already shutdown")
 // Config 配置
 type Config struct {
 	// 选举最短超时时间
-	electionTimeoutMinMs int
+	ElectionTimeoutMinMs int
 	// 选举最长超时时间
-	electionTimeoutMaxMs int
+	ElectionTimeoutMaxMs int
 	// Leader心跳间隔
-	heartbeatMs time.Duration
+	HeartbeatMs time.Duration
 	// rpc请求超时时间
-	rpcMsgTimeoutMs time.Duration
+	RPCMsgTimeoutMs time.Duration
 	// 是否打印日志
-	showLog bool
+	ShowLog bool
 	// 是否自动转发消息(如果在Follower上提交日志,会自动转发到Leader)
-	autoRedirectMessage bool
+	AutoRedirectMessage bool
 }
 
 type Server struct {
@@ -82,12 +82,13 @@ type Server struct {
 	wg       sync.WaitGroup
 }
 
-// NewServer 新建一个节点服务
+// NewServer 新建一个raft服务
 // address为TCP监听的地址,一般给个端口就可以如:8888
-// storage为持续化存储数据
 // commitChan如果有数据新增,则会通知到这里,业务可以用于监听
-// nodeIDs除自己以外的节点列表
-func NewServer(address string, storage Storage, commitChan chan<- CommitEntry, config Config, nodeIDs ...string) *Server {
+// config配置信息,需要确保electionMin比Max要小,并且heartbeat也要比electionMin小这三个参数才可生效
+// 可根据实际情况调整时间,默认min(150ms), max(300ms), heartbeat(20ms)
+// nodeIDs除自己以外的节点列表(新的节点把老的节点的地址都填上即可相互连接)
+func NewServer(address string, commitChan chan<- CommitEntry, config *Config, nodeIDs ...string) *Server {
 	s := new(Server)
 	s.address = address
 	s.nodeClients = make(map[string]*grpc.ClientConn)
@@ -97,14 +98,28 @@ func NewServer(address string, storage Storage, commitChan chan<- CommitEntry, c
 		}
 		s.nodeClients[v] = nil
 	}
-	s.storage = storage
+	s.storage = NewMapStorage()
 	s.commitChan = commitChan
-	s.rpcMsgTimeoutMs = config.rpcMsgTimeoutMs
-	s.heartbeatMs = config.heartbeatMs
-	s.electionTimeoutMinMs = config.electionTimeoutMinMs
-	s.electionTimeoutMaxMs = config.electionTimeoutMaxMs
-	s.showLog = config.showLog
-	s.autoRedirectMessage = config.autoRedirectMessage
+
+	s.rpcMsgTimeoutMs = 500
+	s.heartbeatMs = 20
+	s.electionTimeoutMinMs = 150
+	s.electionTimeoutMaxMs = 300
+	s.showLog = true
+	s.autoRedirectMessage = true
+
+	if config != nil {
+		s.showLog = config.ShowLog
+		s.autoRedirectMessage = config.AutoRedirectMessage
+		if config.ElectionTimeoutMinMs > 0 && config.ElectionTimeoutMaxMs > config.ElectionTimeoutMinMs && config.HeartbeatMs > 0 && config.HeartbeatMs < time.Duration(config.ElectionTimeoutMinMs) {
+			s.electionTimeoutMinMs = config.ElectionTimeoutMinMs
+			s.electionTimeoutMaxMs = config.ElectionTimeoutMaxMs
+			s.heartbeatMs = config.HeartbeatMs
+		}
+		if config.RPCMsgTimeoutMs > 0 {
+			s.rpcMsgTimeoutMs = config.RPCMsgTimeoutMs
+		}
+	}
 	return s
 }
 
@@ -118,6 +133,60 @@ func (s *Server) Server() {
 // Commit 提交日志
 func (s *Server) Commit(command string) bool {
 	return s.raft.submitData(command)
+}
+
+// Status 获取状态
+func (s *Server) Status() (int32, bool, string) {
+	return s.raft.status()
+}
+
+// Logs 获取日志
+// n:0(全部)
+// n>0(正数n个)
+// n<0(倒数n个)
+func (s *Server) Logs(n int) []LogEntry {
+	s.raft.mu.RLock()
+	defer s.raft.mu.RUnlock()
+
+	l := make([]LogEntry, 0)
+
+	if n >= 0 {
+		count := 0
+		for _, val := range s.raft.log {
+			l = append(l, LogEntry{val.Command, val.Term})
+			count++
+			if n > 0 && count >= n {
+				break
+			}
+		}
+	} else {
+		count := -n
+		for i := len(s.raft.log) - 1; i >= 0; i-- {
+			l = append(l, LogEntry{s.raft.log[i].Command, s.raft.log[i].Term})
+			count--
+			if count <= 0 {
+				break
+			}
+		}
+	}
+
+	return l
+}
+
+// Nodes 获取所有节点
+func (s *Server) Nodes() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	node := make([]string, 0)
+
+	for key := range s.nodeClients {
+		node = append(node, key)
+	}
+
+	node = append(node, s.address)
+
+	return node
 }
 
 // Shutdown 关闭服务

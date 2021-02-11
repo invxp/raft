@@ -42,7 +42,7 @@ func NewBench(t *testing.T, address ...string) *BenchTest {
 	commits := make(map[string][]CommitEntry, len(address))
 	storage := make(map[string]*MapStorage, len(address))
 
-	config := Config{150, 300, 50, 3000, true, false}
+	config := &Config{150, 300, 50, 3000, true, false}
 
 	for i, addr := range address {
 		peerIds := make(map[string]*struct{}, 0)
@@ -54,7 +54,7 @@ func NewBench(t *testing.T, address ...string) *BenchTest {
 		}
 		storage[addr] = NewMapStorage()
 		commitChan[addr] = make(chan CommitEntry)
-		ns[addr] = NewServer(addr, storage[addr], commitChan[addr], config, address...)
+		ns[addr] = NewServer(addr, commitChan[addr], config, address...)
 		ns[addr].listenAndServer()
 		alive[addr] = true
 	}
@@ -153,8 +153,8 @@ func (h *BenchTest) RestartPeer(id string) {
 		nodesIds = append(nodesIds, p)
 	}
 
-	config := Config{150, 300, 50, 3000, true, false}
-	h.cluster[id] = NewServer(id, h.storage[id], h.commitChan[id], config, nodesIds...)
+	//config := Config{150, 300, 50, 3000, true, false}
+	//h.cluster[id] = NewServer(id, h.storage[id], h.commitChan[id], config, nodesIds...)
 	h.cluster[id].listenAndServer()
 	h.ReconnectPeer(id)
 	h.cluster[id].raft.run()
@@ -169,7 +169,7 @@ func (h *BenchTest) CheckSingleLeader() (string, int32) {
 		leaderTerm := int32(-1)
 		for i := range h.cluster {
 			if h.connected[i] {
-				_, term, isLeader, _ := h.cluster[i].raft.status()
+				term, isLeader, _ := h.cluster[i].raft.status()
 				if isLeader {
 					if leaderId == "" {
 						leaderId = i
@@ -194,7 +194,7 @@ func (h *BenchTest) CheckSingleLeader() (string, int32) {
 func (h *BenchTest) CheckNoLeader() {
 	for i := range h.cluster {
 		if h.connected[i] {
-			_, _, isLeader, _ := h.cluster[i].raft.status()
+			_, isLeader, _ := h.cluster[i].raft.status()
 			if isLeader {
 				h.t.Fatalf("server %s leader; want none", i)
 			}

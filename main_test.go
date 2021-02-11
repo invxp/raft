@@ -14,10 +14,10 @@ func TestRaft(t *testing.T) {
 	//创建日志回调记录
 	commit := make(chan CommitEntry)
 	//创建默认配置信息
-	config := Config{150, 300, 50, 3000, true, true}
+	config := &Config{150, 300, 50, 3000, true, true}
 
 	//开始监听所有服务
-	server := NewServer(":0", NewMapStorage(), commit, config)
+	server := NewServer(":0", commit, config)
 	server.Server()
 
 	exit := make(chan interface{})
@@ -65,10 +65,10 @@ func TestMainFunctions(t *testing.T) {
 	{
 		commit := make(chan CommitEntry)
 		//创建默认配置信息
-		config := Config{150, 300, 50, 3000, true, true}
+		config := &Config{150, 300, 50, 3000, true, true}
 		//开始监听所有服务
 		//启动第一个服务,因为是第一个,所以没有任何节点信息
-		servers["localhost:1111"] = NewServer("localhost:1111", NewMapStorage(), commit, config)
+		servers["localhost:1111"] = NewServer("localhost:1111", commit, config)
 		servers["localhost:1111"].Server()
 
 		go func(close chan struct{}) {
@@ -92,7 +92,7 @@ func TestMainFunctions(t *testing.T) {
 		//创建默认配置信息
 		config := Config{150, 300, 50, 3000, true, true}
 		//开始监听所有服务,因为先前启动了1111，所以nodes里面要把1111加上
-		servers["localhost:2222"] = NewServer("localhost:2222", NewMapStorage(), commit, config, "localhost:1111")
+		servers["localhost:2222"] = NewServer("localhost:2222", commit, &config, "localhost:1111")
 		servers["localhost:2222"].Server()
 
 		go func(close chan struct{}) {
@@ -120,7 +120,7 @@ func TestMainFunctions(t *testing.T) {
 		//创建默认配置信息
 		config := Config{150, 300, 50, 3000, true, true}
 		//开始监听所有服务
-		servers["localhost:3333"] = NewServer("localhost:3333", NewMapStorage(), commit, config, "localhost:1111", "localhost:2222")
+		servers["localhost:3333"] = NewServer("localhost:3333", commit, &config, "localhost:1111", "localhost:2222")
 		servers["localhost:3333"].Server()
 		go func(close chan struct{}) {
 			for {

@@ -24,6 +24,15 @@ type CommitEntry struct {
 	Term int32
 }
 
+// LogEntry 日志记录
+type LogEntry struct {
+	// Command 日志命令
+	Command string
+
+	// Term 当前的Term
+	Term int32
+}
+
 // FSM 状态机
 type FSM int32
 
@@ -155,7 +164,7 @@ func (r *raft) run() {
 }
 
 // status 获取当前节点状态
-func (r *raft) status() (id string, term int32, isLeader bool, leaderID string) {
+func (r *raft) status() (term int32, isLeader bool, leaderID string) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -170,7 +179,7 @@ func (r *raft) status() (id string, term int32, isLeader bool, leaderID string) 
 		leader = r.votedFor
 	}
 
-	return r.currentAddress, r.currentTerm, r.currentState == Leader, leader
+	return r.currentTerm, r.currentState == Leader, leader
 }
 
 // submitData 提交一条日志(接口)
