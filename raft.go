@@ -4,7 +4,6 @@ package raft
 
 import (
 	"github.com/invxp/raft/proto/message"
-	"google.golang.org/grpc"
 	"math/rand"
 	"sync"
 	"time"
@@ -94,6 +93,7 @@ type raft struct {
 	lastApplied          int32
 	currentState         FSM
 	currentElectionTimer time.Time
+	roleTime             time.Time
 
 	// raft 日志索引游标
 	nextIndex  map[string]int32
@@ -119,7 +119,7 @@ type raft struct {
 // storage用于内部持久化KV存储
 // commitChan每次有数据变更时会回调该函数让业务感知
 // nodeIDs其他节点的地址列表
-func create(address string, server *Server, storage Storage, commitChan chan<- CommitEntry, rpcMsgTimeoutMs, heartbeatMs time.Duration, electionTimeoutMinMs, electionTimeoutMaxMs int, showLog, autoRedirectMessage bool, nodeIDs map[string]*grpc.ClientConn) *raft {
+func create(address string, server *Server, storage Storage, commitChan chan<- CommitEntry, rpcMsgTimeoutMs, heartbeatMs time.Duration, electionTimeoutMinMs, electionTimeoutMaxMs int, showLog, autoRedirectMessage bool, nodeIDs map[string]*rpcClient) *raft {
 	rand.Seed(time.Now().UnixNano())
 
 	cm := &raft{}
@@ -133,7 +133,7 @@ func create(address string, server *Server, storage Storage, commitChan chan<- C
 	cm.commitChan = commitChan
 	cm.innerCommitReadyChan = make(chan struct{}, 65535)
 	cm.triggerChan = make(chan struct{}, 1)
-	cm.currentState = Follower
+	cm.currentState = Shutdown
 	cm.votedFor = ""
 	cm.commitIndex = -1
 	cm.lastApplied = -1
@@ -146,19 +146,24 @@ func create(address string, server *Server, storage Storage, commitChan chan<- C
 	cm.electionTimeoutMaxMs = electionTimeoutMaxMs
 	cm.heartbeatMs = heartbeatMs
 	cm.autoRedirectMessage = autoRedirectMessage
-
 	cm.loadFromStorage()
-
+	cm.saveNodes()
 	return cm
 }
 
 // run 开始运行选举
 func (r *raft) run() {
-	go r.loopCommits()
-
 	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.currentState != Shutdown {
+		return
+	}
+
 	r.currentElectionTimer = time.Now()
-	r.mu.Unlock()
+	r.currentState = Follower
+
+	go r.loopCommits()
 
 	go r.runElectionTimer()
 }

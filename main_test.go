@@ -3,21 +3,27 @@ package raft
 import (
 	"github.com/fortytw2/leaktest"
 	"log"
+	"os"
 	"testing"
 	"time"
 )
 
 func TestRaft(t *testing.T) {
+	_ = os.Remove("vote")
+	_ = os.Remove("term")
+	_ = os.Remove("log")
+	_ = os.Remove("node")
+
 	defer leaktest.CheckTimeout(t, 100*time.Millisecond)()
 
 	//具体可参考TestMainFunctions
 	//创建日志回调记录
 	commit := make(chan CommitEntry)
 	//创建默认配置信息
-	config := &Config{150, 300, 50, 3000, true, true}
+	config := &Config{150, 300, 50, 500, true, true, ":666", "666"}
 
 	//开始监听所有服务
-	server := NewServer(":0", commit, config)
+	server := NewServer(":1111", commit, config, ":2222")
 	server.Server()
 
 	exit := make(chan interface{})
@@ -33,6 +39,8 @@ func TestRaft(t *testing.T) {
 		}
 	}()
 
+	time.Sleep(time.Second)
+
 	//提交一条日志
 	server.Commit("TEST-LOG")
 
@@ -45,6 +53,11 @@ func TestRaft(t *testing.T) {
 }
 
 func TestMainFunctions(t *testing.T) {
+	_ = os.Remove("vote")
+	_ = os.Remove("term")
+	_ = os.Remove("log")
+	_ = os.Remove("node")
+
 	defer leaktest.CheckTimeout(t, 100*time.Millisecond)()
 
 	//添加三个本地节点(实际线上生产过程中,必然是一个一个的启动)
@@ -65,7 +78,7 @@ func TestMainFunctions(t *testing.T) {
 	{
 		commit := make(chan CommitEntry)
 		//创建默认配置信息
-		config := &Config{150, 300, 50, 3000, true, true}
+		config := &Config{150, 300, 50, 3000, false, true, ":666", "666"}
 		//开始监听所有服务
 		//启动第一个服务,因为是第一个,所以没有任何节点信息
 		servers["localhost:1111"] = NewServer("localhost:1111", commit, config)
@@ -75,9 +88,9 @@ func TestMainFunctions(t *testing.T) {
 			for {
 				select {
 				case c := <-commit:
-					log.Println("client: 1111 got data: ", c)
+					log.Println("rpcClient: 1111 got data: ", c)
 				case _ = <-close:
-					log.Println("client: 1111 close")
+					log.Println("rpcClient: 1111 close")
 					return
 				default:
 				}
@@ -90,7 +103,7 @@ func TestMainFunctions(t *testing.T) {
 	{
 		commit := make(chan CommitEntry)
 		//创建默认配置信息
-		config := Config{150, 300, 50, 3000, true, true}
+		config := Config{150, 300, 50, 3000, false, true, ":777", "777"}
 		//开始监听所有服务,因为先前启动了1111，所以nodes里面要把1111加上
 		servers["localhost:2222"] = NewServer("localhost:2222", commit, &config, "localhost:1111")
 		servers["localhost:2222"].Server()
@@ -99,9 +112,9 @@ func TestMainFunctions(t *testing.T) {
 			for {
 				select {
 				case c := <-commit:
-					log.Println("client: 2222 got data: ", c)
+					log.Println("rpcClient: 2222 got data: ", c)
 				case _ = <-close:
-					log.Println("client: 2222 close")
+					log.Println("rpcClient: 2222 close")
 					return
 				default:
 				}
@@ -118,7 +131,7 @@ func TestMainFunctions(t *testing.T) {
 	{
 		commit := make(chan CommitEntry)
 		//创建默认配置信息
-		config := Config{150, 300, 50, 3000, true, true}
+		config := Config{150, 300, 50, 3000, false, true, ":888", "888"}
 		//开始监听所有服务
 		servers["localhost:3333"] = NewServer("localhost:3333", commit, &config, "localhost:1111", "localhost:2222")
 		servers["localhost:3333"].Server()
@@ -126,9 +139,9 @@ func TestMainFunctions(t *testing.T) {
 			for {
 				select {
 				case c := <-commit:
-					log.Println("client: 3333 got data: ", c)
+					log.Println("rpcClient: 3333 got data: ", c)
 				case _ = <-close:
-					log.Println("client: 3333 close")
+					log.Println("rpcClient: 3333 close")
 					return
 				default:
 				}
@@ -138,7 +151,7 @@ func TestMainFunctions(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	servers["localhost:1111"].Commit("3 added to node")
+	servers["localhost:1111"].Commit("test 1")
 
 	time.Sleep(time.Second)
 
@@ -154,7 +167,7 @@ func TestMainFunctions(t *testing.T) {
 
 	time.Sleep(time.Second * 3)
 
-	servers["localhost:3333"].Commit("test logs")
+	servers["localhost:3333"].Commit("test 2")
 
 	time.Sleep(time.Second * 2)
 

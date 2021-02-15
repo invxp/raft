@@ -50,6 +50,7 @@ func (r *raft) startElection() {
 		return
 	}
 
+	r.roleTime = time.Now()
 	r.currentState = Candidate
 	prevTerm := atomic.AddInt32(&r.currentTerm, 1)
 	r.currentElectionTimer = time.Now()
@@ -113,6 +114,7 @@ func (r *raft) becomeFollower(term int32, leaderID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.roleTime = time.Now()
 	r.currentState = Follower
 	r.currentTerm = term
 	r.votedFor = leaderID
@@ -128,6 +130,7 @@ func (r *raft) becomeLeader() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.roleTime = time.Now()
 	r.currentState = Leader
 
 	for peerId := range r.nodeIDs {

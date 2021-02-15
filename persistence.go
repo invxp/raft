@@ -94,3 +94,18 @@ func (r *raft) saveToStorage() {
 		log.Fatal(err)
 	}
 }
+
+// saveNodes 保存节点信息
+func (r *raft) saveNodes() {
+	var nodeData bytes.Buffer
+	var nodes []string
+	for node := range r.nodes() {
+		nodes = append(nodes, node)
+	}
+	if err := gob.NewEncoder(&nodeData).Encode(nodes); err != nil {
+		log.Fatal(err)
+	}
+	if err := ioutil.WriteFile("node", nodeData.Bytes(), 0644); err != nil {
+		log.Fatal(err)
+	}
+}

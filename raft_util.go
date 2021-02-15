@@ -88,8 +88,9 @@ func (r *raft) addNode(address string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.nodeIDs[address]; !ok {
-		if _, e := r.server.connect(address); e == nil {
+		if _, e := r.server.connect(address, false); e == nil {
 			r.nodeIDs[address] = &struct{}{}
+			go r.saveNodes()
 		}
 	}
 	return

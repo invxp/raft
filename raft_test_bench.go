@@ -42,8 +42,6 @@ func NewBench(t *testing.T, address ...string) *BenchTest {
 	commits := make(map[string][]CommitEntry, len(address))
 	storage := make(map[string]*MapStorage, len(address))
 
-	config := &Config{150, 300, 50, 3000, true, false}
-
 	for i, addr := range address {
 		peerIds := make(map[string]*struct{}, 0)
 		for p := 0; p < len(address); p++ {
@@ -54,6 +52,7 @@ func NewBench(t *testing.T, address ...string) *BenchTest {
 		}
 		storage[addr] = NewMapStorage()
 		commitChan[addr] = make(chan CommitEntry)
+		config := &Config{150, 300, 50, 3000, true, false, addr[:len(addr)-1], ""}
 		ns[addr] = NewServer(addr, commitChan[addr], config, address...)
 		ns[addr].listenAndServer()
 		alive[addr] = true
@@ -103,6 +102,7 @@ func (h *BenchTest) Shutdown() {
 	_ = os.Remove("vote")
 	_ = os.Remove("term")
 	_ = os.Remove("log")
+	_ = os.Remove("node")
 }
 
 // DisconnectPeer 断开本地服务并且断开其他节点的该服务
@@ -120,10 +120,10 @@ func (h *BenchTest) DisconnectPeer(id string) {
 func (h *BenchTest) ReconnectPeer(id string) {
 	for j := range h.cluster {
 		if j != id && h.alive[j] {
-			if err := h.cluster[id].connectToNode(j, h.cluster[j].listenAddr()); err != nil {
+			if _, err := h.cluster[id].connect(j, true); err != nil {
 				h.t.Fatal(err)
 			}
-			if err := h.cluster[j].connectToNode(id, h.cluster[id].listenAddr()); err != nil {
+			if _, err := h.cluster[j].connect(id, true); err != nil {
 				h.t.Fatal(err)
 			}
 		}

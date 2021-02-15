@@ -13,7 +13,7 @@ func (r *raft) RequestVote(request *message.RequestVoteRequest) (*message.Reques
 		return nil, ErrorServerAlreadyShutdown
 	}
 
-	r.addNode(request.CandidateId)
+	go r.addNode(request.CandidateId)
 
 	lastLogIndex, lastLogTerm := r.lastLogIndexAndTerm()
 
@@ -47,7 +47,7 @@ func (r *raft) AppendEntries(request *message.AppendEntriesRequest) (*message.Ap
 		return nil, ErrorServerAlreadyShutdown
 	}
 
-	r.addNode(request.LeaderId)
+	go r.addNode(request.LeaderId)
 
 	if request.Term > r.term() {
 		r.becomeFollower(request.Term, request.LeaderId)
@@ -125,7 +125,7 @@ func (r *raft) ForwardMessage(request *message.ForwardMessageRequest) (*message.
 		return nil, ErrorServerAlreadyShutdown
 	}
 
-	r.addNode(request.NodeID)
+	go r.addNode(request.NodeID)
 
 	reply := &message.ForwardMessageReply{}
 	reply.SubmitGranted = false

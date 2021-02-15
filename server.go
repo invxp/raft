@@ -3,21 +3,27 @@
 package raft
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"fmt"
 	"github.com/invxp/raft/proto/message"
 	"google.golang.org/grpc"
+	"io/ioutil"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
 
-var ErrorInvalidClient = fmt.Errorf("client was closed")
+var ErrorInvalidClient = fmt.Errorf("invalid rpcClient")
 
 var ErrorContextCanceled = fmt.Errorf("context canceled")
 
 var ErrorServerAlreadyShutdown = fmt.Errorf("server already shutdown")
+
+var ErrorClientAlreadyClosed = fmt.Errorf("rpcClient already closed")
 
 // Config 配置
 type Config struct {
@@ -33,6 +39,17 @@ type Config struct {
 	ShowLog bool
 	// 是否自动转发消息(如果在Follower上提交日志,会自动转发到Leader)
 	AutoRedirectMessage bool
+	// CMD-Server的监听地址
+	CMDServerAddress string
+	// CMD-Server的密钥
+	CMDServerAuth string
+}
+
+// rpcClient 客户端结构体
+type rpcClient struct {
+	*grpc.ClientConn
+	isClose     bool
+	isConnected bool
 }
 
 type Server struct {
@@ -61,7 +78,7 @@ type Server struct {
 	commitChan chan<- CommitEntry
 
 	// 客户端列表(除自己以外)
-	nodeClients map[string]*grpc.ClientConn
+	nodeClients map[string]*rpcClient
 
 	// 选举最短超时时间
 	electionTimeoutMinMs int
@@ -76,10 +93,16 @@ type Server struct {
 	// 是否自动转发消息(如果在Follower上提交日志,会自动转发到Leader)
 	autoRedirectMessage bool
 
+	// 运行时间
+	runTime time.Time
+
 	// 退出信号
 	quit     chan interface{}
 	shutdown bool
 	wg       sync.WaitGroup
+
+	// CMD服务器
+	cmd *cmdServer
 }
 
 // NewServer 新建一个raft服务
@@ -91,12 +114,25 @@ type Server struct {
 func NewServer(address string, commitChan chan<- CommitEntry, config *Config, nodeIDs ...string) *Server {
 	s := new(Server)
 	s.address = address
-	s.nodeClients = make(map[string]*grpc.ClientConn)
+	s.nodeClients = make(map[string]*rpcClient)
+	s.shutdown = true
+
+	var lastNodes []string
+	if b, err := ioutil.ReadFile("node"); err == nil {
+		d := gob.NewDecoder(bytes.NewBuffer(b))
+		if err := d.Decode(&lastNodes); err != nil {
+			_ = os.Remove("node")
+			log.Fatal(err)
+		}
+	}
+
+	nodeIDs = append(nodeIDs, lastNodes...)
+
 	for _, v := range nodeIDs {
 		if v == address {
 			continue
 		}
-		s.nodeClients[v] = nil
+		s.nodeClients[v] = &rpcClient{}
 	}
 	s.storage = NewMapStorage()
 
@@ -119,7 +155,12 @@ func NewServer(address string, commitChan chan<- CommitEntry, config *Config, no
 		if config.RPCMsgTimeoutMs > 0 {
 			s.rpcMsgTimeoutMs = config.RPCMsgTimeoutMs
 		}
+		if config.CMDServerAddress != "" {
+			s.cmd = &cmdServer{srv: s}
+			s.cmd.serv(config.CMDServerAddress, config.CMDServerAuth)
+		}
 	}
+
 	return s
 }
 
@@ -174,14 +215,21 @@ func (s *Server) Logs(n int) []LogEntry {
 }
 
 // Nodes 获取所有节点
-func (s *Server) Nodes() []string {
+// alive 只返回活着的节点
+func (s *Server) Nodes(alive ...bool) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	node := make([]string, 0)
 
-	for key := range s.nodeClients {
-		node = append(node, key)
+	for key, val := range s.nodeClients {
+		if len(alive) > 0 && alive[0] == true {
+			if val.isConnected && !val.isClose {
+				node = append(node, key)
+			}
+		} else {
+			node = append(node, key)
+		}
 	}
 
 	node = append(node, s.address)
@@ -191,21 +239,28 @@ func (s *Server) Nodes() []string {
 
 // Shutdown 关闭服务
 func (s *Server) Shutdown() {
+	if s.shutdown {
+		return
+	}
+
 	s.disconnectAll()
 	s.raft.stop()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.shutdown {
-		return
-	}
 	close(s.quit)
 	s.rpcServer.GracefulStop()
 	s.wg.Wait()
+
+	_ = s.cmd.shutdown()
+
 	s.shutdown = true
 }
 
 // listenAndServer 注册RPC、创建raft对象并监听
 func (s *Server) listenAndServer() {
+	if !s.shutdown {
+		return
+	}
 	var err error
 	s.listener, err = net.Listen("tcp", s.address)
 	if err != nil {
@@ -216,6 +271,8 @@ func (s *Server) listenAndServer() {
 	s.rpcProxy = &rpcProxy{raft: s.raft}
 	s.shutdown = false
 	s.quit = make(chan interface{})
+	s.runTime = time.Now()
+
 	message.RegisterMessageServer(s.rpcServer, s.rpcProxy)
 
 	s.raft.debugLog("grpc server started...")
@@ -243,66 +300,49 @@ func (s *Server) disconnectAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for id := range s.nodeClients {
-		if s.nodeClients[id] != nil {
-			err := s.nodeClients[id].Close()
-			s.raft.debugLog("shutdown grpc client: %s, %v", id, err)
-			s.nodeClients[id] = nil
+	for id, val := range s.nodeClients {
+		if !val.isConnected || val.isClose || val.ClientConn == nil {
+			continue
 		}
+		err := s.nodeClients[id].Close()
+		s.raft.debugLog("shutdown grpc rpcClient: %s, %v", id, err)
+		s.nodeClients[id].isClose = true
+		s.nodeClients[id].isConnected = false
+		s.nodeClients[id].ClientConn = nil
 	}
 }
 
-// listenAddr 获取监听地址
-func (s *Server) listenAddr() net.Addr {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.listener.Addr()
-}
-
 // connectToNode 连接到指定节点
-func (s *Server) connect(nodeID string) (*grpc.ClientConn, error) {
-	if client := s.nodes()[nodeID]; client != nil {
-		return client, nil
+func (s *Server) connect(nodeID string, force bool) (*grpc.ClientConn, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if client := s.nodeClients[nodeID]; client != nil {
+		if client.isClose && !force {
+			return nil, ErrorClientAlreadyClosed
+		}
+		if client.isConnected {
+			return client.ClientConn, nil
+		}
+	} else {
+		s.nodeClients[nodeID] = &rpcClient{}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*s.rpcMsgTimeoutMs)
 	defer cancel()
 	conn, err := grpc.DialContext(ctx, nodeID, grpc.WithInsecure(), grpc.WithBlock())
 
-	s.raft.debugLog("connect to grpc client: %s, %v", nodeID, err)
+	s.raft.debugLog("connect to grpc rpcClient: %s, %v", nodeID, err)
 
 	if err != nil {
 		return nil, err
 	}
 
-	s.mu.Lock()
-	s.nodeClients[nodeID] = conn
-	s.mu.Unlock()
+	s.nodeClients[nodeID].ClientConn = conn
+	s.nodeClients[nodeID].isConnected = true
+	s.nodeClients[nodeID].isClose = false
 
 	return conn, nil
-}
-
-// connectToNode 连接到指定节点
-func (s *Server) connectToNode(nodeID string, addr net.Addr) error {
-	if s.nodes()[nodeID] != nil {
-		return nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*s.rpcMsgTimeoutMs)
-	defer cancel()
-	conn, err := grpc.DialContext(ctx, addr.String(), grpc.WithInsecure(), grpc.WithBlock())
-
-	s.raft.debugLog("connect to grpc client: %s, %v", nodeID, err)
-
-	if err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	s.nodeClients[nodeID] = conn
-	s.mu.Unlock()
-
-	return nil
 }
 
 // disconnectNode 断开连接
@@ -311,9 +351,14 @@ func (s *Server) disconnectNode(nodeID string) error {
 	defer s.mu.Unlock()
 
 	if client := s.nodeClients[nodeID]; client != nil {
+		if !client.isConnected || client.isClose || client.ClientConn == nil {
+			return nil
+		}
 		err := s.nodeClients[nodeID].Close()
-		s.raft.debugLog("shutdown grpc client: %s, %v", nodeID, err)
-		s.nodeClients[nodeID] = nil
+		s.raft.debugLog("shutdown grpc rpcClient: %s, %v", nodeID, err)
+		s.nodeClients[nodeID].isClose = true
+		s.nodeClients[nodeID].isConnected = false
+		s.nodeClients[nodeID].ClientConn = nil
 		return err
 	}
 
@@ -322,22 +367,49 @@ func (s *Server) disconnectNode(nodeID string) error {
 
 // connectToNodes 连接到所有节点
 func (s *Server) connectToNodes() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for k := range s.nodeClients {
-		ctx, cancel := context.WithTimeout(context.Background(), s.rpcMsgTimeoutMs*time.Millisecond)
-		conn, err := grpc.DialContext(ctx, k, grpc.WithInsecure(), grpc.WithBlock())
-		if err == nil {
-			s.nodeClients[k] = conn
-		}
-		s.raft.debugLog("connect to grpc client: %s, %v", k, err)
-		cancel()
+	wg := &sync.WaitGroup{}
+
+	for k, v := range s.nodes() {
+		wg.Add(1)
+		go func(node string, client *rpcClient) {
+			defer wg.Done()
+			if client.isClose || client.isConnected {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), s.rpcMsgTimeoutMs*time.Millisecond)
+			conn, err := grpc.DialContext(ctx, node, grpc.WithInsecure(), grpc.WithBlock())
+			if err == nil {
+				s.mu.Lock()
+				if s.nodeClients[node] == nil {
+					s.nodeClients[node] = &rpcClient{}
+				}
+				s.nodeClients[node].ClientConn = conn
+				s.nodeClients[node].isConnected = true
+				s.nodeClients[node].isClose = false
+				s.mu.Unlock()
+			}
+			s.raft.debugLog("connect to grpc rpcClient: %s, %v", node, err)
+			cancel()
+		}(k, v)
 	}
+
+	wg.Wait()
 }
 
 // call RPC调用
 func (s *Server) call(id string, serviceMethod string, args interface{}, reply interface{}, timeoutMs time.Duration) error {
-	if client := s.nodes()[id]; client != nil {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if client := s.nodeClients[id]; client != nil {
+		if client.isClose {
+			return ErrorClientAlreadyClosed
+		}
+		if !client.isConnected {
+			go func() {
+				_, _ = s.connect(id, false)
+			}()
+			return nil
+		}
 		bg := context.Background()
 		ctx, cancel := context.WithTimeout(bg, time.Millisecond*timeoutMs)
 		defer cancel()
@@ -348,8 +420,8 @@ func (s *Server) call(id string, serviceMethod string, args interface{}, reply i
 }
 
 // nodes 获取所有节点
-func (s *Server) nodes() map[string]*grpc.ClientConn {
-	m := make(map[string]*grpc.ClientConn)
+func (s *Server) nodes() map[string]*rpcClient {
+	m := make(map[string]*rpcClient)
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
